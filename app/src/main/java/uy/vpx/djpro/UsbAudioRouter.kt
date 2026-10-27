@@ -88,10 +88,8 @@ class UsbAudioRouter(
         val target = findOutput()
         selected = target
         if (target == null) {
-            players().forEach {
-                try { if (it?.isPlaying == true) it.pause() } catch (_: Exception) {}
-            }
-            publish("AUDIO USB: sin salida USB para AudioTrack. " + diagnostic())
+            publish("AUDIO: modo automático del sistema (parlante/auriculares). " +
+                "USB no enumerado. " + diagnostic())
             return
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
@@ -130,20 +128,23 @@ class UsbAudioRouter(
     }
 
     fun readyForPlayback(player: UsbPcmPlayer): Boolean {
-        if (closed || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            publish("AUDIO USB: enrutamiento no soportado por esta versión de Android.")
-            return false
+        if (closed) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            publish("AUDIO: reproducción por ruta automática de Android.")
+            return true
         }
         val output = findOutput()
         if (output == null) {
             selected = null
-            publish("AUDIO USB: sin salida USB para AudioTrack. " + diagnostic())
-            return false
+            publish("AUDIO: reproducción habilitada por salida automática del sistema. " +
+                "USB no enumerado.")
+            return true
         }
         selected = output
         if (!applyTo(player, output)) {
-            publish("AUDIO USB: Android rechazó seleccionar " + name(output) + ".")
-            return false
+            publish("AUDIO: Android no aceptó " + name(output) +
+                ". Usando la salida automática (sin bloquear PLAY).")
+            return true
         }
         publish("AUDIO USB: salida " + name(output) + " solicitada, comprobando reproducción...")
         return true
@@ -168,10 +169,8 @@ class UsbAudioRouter(
             if (isUsbOutput(route) && route.id == output.id) {
                 confirmed++
             } else {
-                // Never silently play via tablet speaker when USB was requested.
-                try { player.pause() } catch (_: Exception) {}
-                publish("AUDIO USB: Android envió sonido a " + name(route) +
-                    " en vez de " + name(output) + ". Se pausó para evitar usar el altavoz.")
+                publish("AUDIO: salida actual " + name(route) +
+                    " (preferida USB: " + name(output) + "). La reproducción continúa.")
                 return
             }
         }

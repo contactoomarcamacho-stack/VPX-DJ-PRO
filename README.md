@@ -77,3 +77,13 @@ Ahora se prueban, en orden, 44100 Hz estéreo PCM16, 48000 Hz estéreo PCM16, 44
 MediaExtractor + MediaCodec decodifican el archivo; Pcm16Resampler convierte los frames al formato PCM16 y a la frecuencia de salida seleccionados, manteniendo la interpolación entre bloques. El mensaje de carga muestra el formato efectivo. Hay pruebas unitarias para resampleo 48 kHz -> 44.1 kHz, entrada mono, salida mono de respaldo y continuidad entre buffers. Los fallos del decodificador se muestran en el indicador AUDIO PCM.
 
 NOTA: estos cambios corrigen el error de formato y de búfer PCM. NO hacen aparecer automáticamente una salida USB que Android no publica en AudioManager. AudioTrack.setPreferredDevice sólo funciona con una salida AudioDeviceInfo real, y no permite ignorar la política de audio del sistema. Compilación verde tampoco confirma audio físico sin pruebas en la tablet.
+
+## v0.7.0, compilacion #22: playback failover and auto audio routing
+
+- PcmTrackEngine: MediaExtractor + MediaCodec + PCM16 AudioTrack. When getMinBufferSize returns ERROR (-1), do not abort: try bounded fixed buffers for 44100 and 48000 Hz, stereo and mono, both AudioTrack.Builder and legacy STREAM_MUSIC constructor.
+- UsbPcmPlayer: wraps the PCM engine and transparently falls back to standard Android MediaPlayer if AudioTrack is unavailable or decoding fails. Keeps two independent decks, transport, pitch, volume, device preference, and playback position.
+- A "MOTOR DEL SISTEMA (RESPALDO)" button manually switches loaded decks to Android's MediaPlayer to diagnose failure even when AudioTrack initialized but is silent.
+- UsbAudioRouter: USB is preferred, not mandatory. If Android enumerates no USB sink, the application allows playback using the device's default output, usually tablet speakers. No automatic pause merely because an output device differs from USB.
+- PcmBufferSizingTest checks that a -1 minimum buffer still produces usable bounded candidates.
+
+Limitations: BUILD SUCCESSFUL verifies compilation and unit tests, not that physical audio outputs produce sound. If Android's audio service has no functioning output at all, neither AudioTrack nor MediaPlayer can override the OS. MIDI mapping from previous versions remains unchanged.

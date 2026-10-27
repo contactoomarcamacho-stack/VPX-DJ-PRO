@@ -121,7 +121,17 @@ class MainActivity : Activity() {
             text = "DETECTAR SALIDA USB AUDIO"
             setOnClickListener { audioRouter.refresh() }
         })
-        root.addView(text("MIDI: USB DIRECTO es sólo para controles. AUDIO USB usa AudioTrack y necesita que Android reconozca la interfaz como salida.", 11f, Color.LTGRAY))
+        root.addView(Button(this).apply {
+            text = "MOTOR DEL SISTEMA (RESPALDO)"
+            setOnClickListener {
+                decks.forEach { it.player?.forceSystemEngine() }
+                audioRouter.refresh()
+                Toast.makeText(this@MainActivity,
+                    "Usando el reproductor estándar de Android cuando sea necesario",
+                    Toast.LENGTH_SHORT).show()
+            }
+        })
+        root.addView(text("MIDI USB DIRECTO es sólo para controles. El audio reproduce por la salida disponible y prioriza la Numark si Android la publica. Motor del sistema permite probar MediaPlayer.", 11f, Color.LTGRAY))
         setContentView(scroller)
 
         audioRouter = UsbAudioRouter(this, handler,
@@ -274,9 +284,10 @@ class MainActivity : Activity() {
             val player = UsbPcmPlayer(this, uri).apply {
                 onCompletion = { runOnUiThread { updatePlayButton(index) } }
                 onError = { message -> runOnUiThread {
-                    audioStatus.text = "AUDIO PCM: " + message
+                    audioStatus.text = "AUDIO: " + message
                     updatePlayButton(index)
                 } }
+                onEngineChanged = { runOnUiThread { onDeckEngineChanged(index) } }
             }
             d.player = player
             audioRouter.attach(player)
@@ -299,6 +310,22 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun onDeckEngineChanged(index: Int) {
+        val deck = decks[index]
+        val player = deck.player ?: return
+        try { deck.equalizer?.release() } catch (_: Exception) {}
+        deck.equalizer = null
+        try {
+            deck.equalizer = Equalizer(0, player.audioSessionId).apply { enabled = true }
+            updateEq(index)
+        } catch (_: Exception) {}
+        audioRouter.refresh()
+        updateVolumes()
+        applySpeed(index)
+        updatePlayButton(index)
+        audioStatus.text = "AUDIO: " + player.outputDescription
+    }
+
     private fun togglePlay(index: Int) {
         val p = decks[index].player
         if (p == null) {
@@ -307,7 +334,7 @@ class MainActivity : Activity() {
         }
         if (p.isPlaying) p.pause() else {
             if (!audioRouter.readyForPlayback(p)) {
-                Toast.makeText(this, "No se detecta salida de audio USB. Revisá el indicador verde.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "El audio no está disponible. Revisá el estado del motor.", Toast.LENGTH_LONG).show()
                 return
             }
             p.start()
