@@ -67,3 +67,13 @@ The Android MIDI service does not require an application-level MIDI permission.
 - Si la interfaz aparece en el bus USB **pero no está habilitada como salida por el sistema Android**, AudioTrack no puede forzarla ni habilitar interfaces USB de audio que no tengan driver del sistema. En ese caso la app muestra el motivo; desactivar la opción de desarrollador «Inhabilitar enrutamiento de audio USB» puede ayudar.
 - Los dos reproductores requieren archivos de audio mono o estéreo que puedan decodificarse a PCM16 con el decodificador del dispositivo. Esta versión no implementa ASIO, salida exclusiva ni canales USB 3/4 para preescucha independiente.
 - Un BUILD SUCCESSFUL verifica el compilado, **no** la presencia de salida de audio USB ni el sonido en la consola real.
+
+
+## Compilación #21: PCM16 estéreo 44100 Hz y modos seguros
+Se corrigió la creación de AudioTrack: antes intentaba utilizar directamente el sample rate y el número de canales del archivo, lo que daba ERROR_BAD_VALUE en algunos dispositivos.
+
+Ahora se prueban, en orden, 44100 Hz estéreo PCM16, 48000 Hz estéreo PCM16, 44100 Hz mono PCM16, 48000 Hz mono PCM16 y 32000 Hz estéreo PCM16. Cada modo se valida con AudioTrack.getMinBufferSize y AudioTrack.STATE_INITIALIZED. Si Android rechaza uno, se libera la instancia y se prueba el siguiente sin bloquear la carga.
+
+MediaExtractor + MediaCodec decodifican el archivo; Pcm16Resampler convierte los frames al formato PCM16 y a la frecuencia de salida seleccionados, manteniendo la interpolación entre bloques. El mensaje de carga muestra el formato efectivo. Hay pruebas unitarias para resampleo 48 kHz -> 44.1 kHz, entrada mono, salida mono de respaldo y continuidad entre buffers. Los fallos del decodificador se muestran en el indicador AUDIO PCM.
+
+NOTA: estos cambios corrigen el error de formato y de búfer PCM. NO hacen aparecer automáticamente una salida USB que Android no publica en AudioManager. AudioTrack.setPreferredDevice sólo funciona con una salida AudioDeviceInfo real, y no permite ignorar la política de audio del sistema. Compilación verde tampoco confirma audio físico sin pruebas en la tablet.

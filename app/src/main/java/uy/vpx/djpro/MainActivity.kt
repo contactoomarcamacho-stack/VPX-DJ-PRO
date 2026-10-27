@@ -273,6 +273,10 @@ class MainActivity : Activity() {
             d.player = null
             val player = UsbPcmPlayer(this, uri).apply {
                 onCompletion = { runOnUiThread { updatePlayButton(index) } }
+                onError = { message -> runOnUiThread {
+                    audioStatus.text = "AUDIO PCM: " + message
+                    updatePlayButton(index)
+                } }
             }
             d.player = player
             audioRouter.attach(player)
@@ -285,7 +289,7 @@ class MainActivity : Activity() {
             } catch (_: Exception) { }
             updateVolumes()
             updatePlayButton(index)
-            Toast.makeText(this, "Tema cargado en Deck " + (if (index == 0) "A" else "B"), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Tema cargado Deck " + (if (index == 0) "A" else "B") + ": " + player.outputDescription, Toast.LENGTH_LONG).show()
         } catch (error: Exception) {
             audioRouter.detach(d.player)
             d.player?.release()
