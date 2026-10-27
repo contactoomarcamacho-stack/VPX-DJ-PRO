@@ -57,3 +57,13 @@ The Android MIDI service does not require an application-level MIDI permission.
 - Android 9+ required for explicit MediaPlayer route preference; no separate app-level USB Audio permission is needed when Android exposes it as an AudioDeviceInfo.
 - Connect speakers to the original Mixtrack Pro rear **MASTER RCA OUTPUT 1**; USB audio channels 1/2 are master. Cue/headphones use the other stereo pair (3/4), which cannot be separated with this MediaPlayer-based prototype.
 - If output is not detected, check USB OTG and turn OFF Android developer option "Disable USB audio routing". Android's audio policy may refuse unsupported USB audio devices; an app cannot override that.
+
+
+## v0.5.0: audio USB mediante AudioTrack (compilación #20)
+- El motor PCM **ya no reproduce audio con MediaPlayer**. Usa MediaExtractor y MediaCodec para decodificar los archivos seleccionados a PCM de 16 bits y AudioTrack (modo streaming) para transmitirlo.
+- Hay una instancia AudioTrack para cada deck. La mezcla la realiza el mezclador de audio de Android; volumen, crossfader, pitch (cambio de frecuencia), y EQ están asociados a las sesiones del motor PCM.
+- UsbAudioRouter consulta AudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS), prioriza TYPE_USB_DEVICE / TYPE_USB_HEADSET de Numark y llama a AudioTrack.setPreferredDevice. También verifica AudioTrack.getRoutedDevice durante la reproducción; no envía el sonido al altavoz de la tablet silenciosamente.
+- El diagnóstico de audio inspecciona además UsbManager.deviceList para buscar interfaces USB Audio Class / AudioStreaming (clase 1, subclase 2).
+- Si la interfaz aparece en el bus USB **pero no está habilitada como salida por el sistema Android**, AudioTrack no puede forzarla ni habilitar interfaces USB de audio que no tengan driver del sistema. En ese caso la app muestra el motivo; desactivar la opción de desarrollador «Inhabilitar enrutamiento de audio USB» puede ayudar.
+- Los dos reproductores requieren archivos de audio mono o estéreo que puedan decodificarse a PCM16 con el decodificador del dispositivo. Esta versión no implementa ASIO, salida exclusiva ni canales USB 3/4 para preescucha independiente.
+- Un BUILD SUCCESSFUL verifica el compilado, **no** la presencia de salida de audio USB ni el sonido en la consola real.

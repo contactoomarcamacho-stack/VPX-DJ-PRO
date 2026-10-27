@@ -3,8 +3,6 @@ package uy.vpx.djpro
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.Bundle
@@ -32,7 +30,7 @@ import kotlin.math.sin
  */
 class MainActivity : Activity() {
     private class Deck {
-        var player: MediaPlayer? = null
+        var player: UsbPcmPlayer? = null
         var equalizer: Equalizer? = null
         var name: TextView? = null
         var position: SeekBar? = null
@@ -123,7 +121,7 @@ class MainActivity : Activity() {
             text = "DETECTAR SALIDA USB AUDIO"
             setOnClickListener { audioRouter.refresh() }
         })
-        root.addView(text("Si aparece conectada pero no registra controles, probá USB DIRECTO. El permiso lo solicita Android.", 11f, Color.LTGRAY))
+        root.addView(text("MIDI: USB DIRECTO es sólo para controles. AUDIO USB usa AudioTrack y necesita que Android reconozca la interfaz como salida.", 11f, Color.LTGRAY))
         setContentView(scroller)
 
         audioRouter = UsbAudioRouter(this, handler,
@@ -273,14 +271,8 @@ class MainActivity : Activity() {
             audioRouter.detach(d.player)
             d.player?.release()
             d.player = null
-            val player = MediaPlayer().apply {
-                setAudioAttributes(AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build())
-                setDataSource(this@MainActivity, uri)
-                prepare()
-                setOnCompletionListener { updatePlayButton(index) }
+            val player = UsbPcmPlayer(this, uri).apply {
+                onCompletion = { runOnUiThread { updatePlayButton(index) } }
             }
             d.player = player
             audioRouter.attach(player)
@@ -358,7 +350,7 @@ class MainActivity : Activity() {
         val d = decks[index]
         try {
             val p = d.player ?: return
-            p.playbackParams = p.playbackParams.setSpeed((d.pitch + d.bend).coerceIn(0.5f, 1.5f))
+            p.setSpeed((d.pitch + d.bend).coerceIn(0.5f, 1.5f))
         } catch (_: Exception) { }
     }
 

@@ -5,7 +5,8 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioRouting
-import android.media.MediaPlayer
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Handler
 
@@ -16,15 +17,16 @@ import android.os.Handler
 class UsbAudioRouter(
     context: Context,
     private val handler: Handler,
-    private val players: () -> List<MediaPlayer?>,
+    private val players: () -> List<UsbPcmPlayer?>,
     private val onStatus: (String) -> Unit
 ) {
     private val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private var selected: AudioDeviceInfo? = null
     private var closed = false
     private var lastStatus = ""
     private val routingListeners =
-        mutableMapOf<MediaPlayer, AudioRouting.OnRoutingChangedListener>()
+        mutableMapOf<UsbPcmPlayer, AudioRouting.OnRoutingChangedListener>()
 
     private val devicesCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -58,6 +60,29 @@ class UsbAudioRouter(
         ).firstOrNull()
     }
 
+    private fun diagnostic(): String {
+        val all = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val outputs = all.joinToString(", ") { name(it) + " [tipo=" + it.type + "]" }
+        var audioStreaming = 0
+        val usbDevices = usbManager.deviceList.values
+        for (device in usbDevices) {
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                if (iface.interfaceClass == UsbConstants.USB_CLASS_AUDIO &&
+                    iface.interfaceSubclass == 2) audioStreaming++
+            }
+        }
+        return if (audioStreaming > 0) {
+            "USB informa " + audioStreaming + " interfaz(es) AudioStreaming, pero Android no habilita ninguna salida. " +
+                "Salidas Android: " + (if (outputs.isEmpty()) "ninguna" else outputs) +
+                ". Desactivá 'Inhabilitar enrutamiento de audio USB' en Opciones de desarrollador."
+        } else {
+            "La consola responde MIDI, pero Android no expone interfaz USB AudioStreaming. " +
+                "Salidas Android: " + (if (outputs.isEmpty()) "ninguna" else outputs) +
+                ". Verificá OTG y configuración USB del sistema."
+        }
+    }
+
     fun refresh() {
         if (closed) return
         val target = findOutput()
@@ -66,11 +91,11 @@ class UsbAudioRouter(
             players().forEach {
                 try { if (it?.isPlaying == true) it.pause() } catch (_: Exception) {}
             }
-            publish("AUDIO USB: Android NO detecta la tarjeta de sonido USB. La conexión MIDI es independiente.")
+            publish("AUDIO USB: sin salida USB para AudioTrack. " + diagnostic())
             return
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            publish("AUDIO USB: este enrutamiento de MediaPlayer requiere Android 9 o posterior.")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            publish("AUDIO USB: este enrutamiento requiere Android 7 o posterior.")
             return
         }
         var accepted = 0
@@ -78,9 +103,9 @@ class UsbAudioRouter(
         publish("AUDIO USB: " + name(target) + " detectada. Rutas solicitadas: " + accepted + ". Salida MASTER RCA Output 1.")
     }
 
-    fun attach(player: MediaPlayer) {
+    fun attach(player: UsbPcmPlayer) {
         if (closed) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             val callback = AudioRouting.OnRoutingChangedListener {
                 handler.postDelayed({ if (!closed) verifyRouting() }, 250)
             }
@@ -90,29 +115,29 @@ class UsbAudioRouter(
         selected?.let { applyTo(player, it) }
     }
 
-    fun detach(player: MediaPlayer?) {
+    fun detach(player: UsbPcmPlayer?) {
         if (player == null) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             routingListeners.remove(player)?.let {
                 try { player.removeOnRoutingChangedListener(it) } catch (_: Exception) {}
             }
         }
     }
 
-    private fun applyTo(player: MediaPlayer, output: AudioDeviceInfo): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+    private fun applyTo(player: UsbPcmPlayer, output: AudioDeviceInfo): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
         return try { player.setPreferredDevice(output) } catch (_: Exception) { false }
     }
 
-    fun readyForPlayback(player: MediaPlayer): Boolean {
-        if (closed || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+    fun readyForPlayback(player: UsbPcmPlayer): Boolean {
+        if (closed || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             publish("AUDIO USB: enrutamiento no soportado por esta versión de Android.")
             return false
         }
         val output = findOutput()
         if (output == null) {
             selected = null
-            publish("AUDIO USB: sin salida USB. Revisá OTG y la opción de Android 'Inhabilitar enrutamiento de audio USB'.")
+            publish("AUDIO USB: sin salida USB para AudioTrack. " + diagnostic())
             return false
         }
         selected = output
@@ -129,7 +154,7 @@ class UsbAudioRouter(
     }
 
     private fun verifyRouting() {
-        if (closed || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        if (closed || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
         val output = selected ?: return
         val playing = players().filter {
             try { it?.isPlaying == true } catch (_: Exception) { false }
