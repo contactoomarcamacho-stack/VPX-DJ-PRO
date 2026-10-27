@@ -21,6 +21,11 @@ class MainActivity : Activity() {
  private var midiDevice: MidiDevice? = null
  private val mappedPlay = mutableMapOf<Int, Int>()
  private var learnDeck = -1
+ private var learnAction = "play"
+ private val mappedCue = mutableMapOf<Int, Int>()
+ private val mappedPitch = mutableMapOf<Int, Int>()
+ private val pitchBars = arrayOfNulls<SeekBar>(2)
+ private lateinit var midiMonitor: TextView
  override fun onCreate(savedInstanceState: Bundle?) {
   super.onCreate(savedInstanceState)
   midi = getSystemService(MIDI_SERVICE) as MidiManager
@@ -41,8 +46,11 @@ class MainActivity : Activity() {
    val play = Button(this).apply { text = "PLAY / PAUSE"; setOnClickListener { togglePlay(index) } }
    playButtons[index] = play
    deck.addView(cue); deck.addView(play)
-   deck.addView(Button(this).apply { text = "APRENDER PLAY MIDI"; setOnClickListener { learnDeck = index; Toast.makeText(this@MainActivity, "Pulsá PLAY en la Numark", Toast.LENGTH_SHORT).show() } })
+   deck.addView(Button(this).apply { text = "APRENDER PLAY MIDI"; setOnClickListener { learnDeck = index; learnAction = "play"; Toast.makeText(this@MainActivity, "Pulsá PLAY en la Numark", Toast.LENGTH_SHORT).show() } })
+   deck.addView(Button(this).apply { text = "APRENDER CUE MIDI"; setOnClickListener { learnDeck = index; learnAction = "cue"; Toast.makeText(this@MainActivity, "Pulsá CUE en la Numark", Toast.LENGTH_SHORT).show() } })
+   deck.addView(Button(this).apply { text = "APRENDER PITCH MIDI"; setOnClickListener { learnDeck = index; learnAction = "pitch"; Toast.makeText(this@MainActivity, "Mové el pitch en la Numark", Toast.LENGTH_SHORT).show() } })
    val pitch = SeekBar(this).apply { max = 200; progress = 100 }
+   pitchBars[index] = pitch
    deck.addView(pitch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
    pitch.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
     override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { if (fromUser) try { players[index]?.let { it.playbackParams = it.playbackParams.setSpeed((0.5f + value / 200f).coerceIn(0.5f, 1.5f)) } } catch (_: Exception) {} }
@@ -52,6 +60,8 @@ class MainActivity : Activity() {
    decks.addView(deck, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
   }
   root.addView(decks, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f))
+  midiMonitor = TextView(this).apply { text = "MIDI: esperando controles físicos"; setTextColor(Color.YELLOW); gravity = Gravity.CENTER }
+  root.addView(midiMonitor)
   val refresh = Button(this).apply { text = "BUSCAR CONTROLADORA MIDI"; setOnClickListener { scanMidi() } }
   root.addView(refresh)
   setContentView(root)
@@ -85,11 +95,21 @@ class MainActivity : Activity() {
    val channel = msg[offset].toInt() and 0x0F
    val number = msg[offset + 1].toInt() and 0x7F
    val velocity = msg[offset + 2].toInt() and 0x7F
-   if (velocity == 0) return
+   if (command == 0x80 || (command == 0x90 && velocity == 0)) return
    val key = (command shl 16) or (channel shl 8) or number
    runOnUiThread {
-    if (learnDeck >= 0) { mappedPlay[key] = learnDeck; learnDeck = -1; Toast.makeText(this@MainActivity, "PLAY MIDI asignado", Toast.LENGTH_SHORT).show() }
-    else mappedPlay[key]?.let { togglePlay(it) }
+    midiMonitor.text = "MIDI RECIBIDO: tipo=$command canal=$channel control=$number valor=$velocity"
+    if (learnDeck >= 0) {
+     when (learnAction) { "play" -> mappedPlay[key] = learnDeck; "cue" -> mappedCue[key] = learnDeck; "pitch" -> mappedPitch[key] = learnDeck }
+     learnDeck = -1
+     Toast.makeText(this@MainActivity, "Control MIDI asignado", Toast.LENGTH_SHORT).show()
+    } else {
+     mappedPitch[key]?.let { deck -> val value = (velocity * 200 / 127).coerceIn(0, 200); pitchBars[deck]?.progress = value; try { players[deck]?.let { it.playbackParams = it.playbackParams.setSpeed(0.5f + value / 200f) } } catch (_: Exception) {} }
+     if (velocity > 0) {
+      mappedPlay[key]?.let { togglePlay(it) }
+      mappedCue[key]?.let { deck -> players[deck]?.pause(); players[deck]?.seekTo(0); playButtons[deck]?.text = "PLAY" }
+     }
+    }
    }
   }
  }
