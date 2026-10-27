@@ -55,6 +55,8 @@ class MainActivity : Activity() {
     private val decks = arrayOf(Deck(), Deck())
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var connector: NumarkMidiConnection
+    private lateinit var audioRouter: UsbAudioRouter
+    private lateinit var audioStatus: TextView
     private lateinit var connectionStatus: TextView
     private lateinit var midiMonitor: TextView
     private lateinit var crossBar: SeekBar
@@ -77,6 +79,8 @@ class MainActivity : Activity() {
         root.addView(text("VPX DJ PRO   |   NUMARK MIXTRACK PRO", 21f, Color.WHITE))
         connectionStatus = text("Buscando controladora USB MIDI...", 13f, Color.CYAN)
         root.addView(connectionStatus)
+        audioStatus = text("AUDIO USB: buscando tarjeta de sonido...", 13f, Color.GREEN)
+        root.addView(audioStatus)
 
         val decksRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for (deck in 0..1) {
@@ -115,8 +119,18 @@ class MainActivity : Activity() {
             setOnClickListener { connector.useDirectUsb() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(connectionActions)
+        root.addView(Button(this).apply {
+            text = "DETECTAR SALIDA USB AUDIO"
+            setOnClickListener { audioRouter.refresh() }
+        })
         root.addView(text("Si aparece conectada pero no registra controles, probá USB DIRECTO. El permiso lo solicita Android.", 11f, Color.LTGRAY))
         setContentView(scroller)
+
+        audioRouter = UsbAudioRouter(this, handler,
+            players = { decks.map { it.player } },
+            onStatus = { audioStatus.text = it }
+        )
+        audioRouter.start()
 
         connector = NumarkMidiConnection(this,
             onStatus = { connectionStatus.text = it },
@@ -256,6 +270,7 @@ class MainActivity : Activity() {
         try {
             d.equalizer?.release()
             d.equalizer = null
+            audioRouter.detach(d.player)
             d.player?.release()
             d.player = null
             val player = MediaPlayer().apply {
@@ -268,6 +283,7 @@ class MainActivity : Activity() {
                 setOnCompletionListener { updatePlayButton(index) }
             }
             d.player = player
+            audioRouter.attach(player)
             d.name?.text = uri.lastPathSegment?.substringAfterLast('/') ?: "Tema cargado"
             d.position?.progress = 0
             d.cueMs = 0
@@ -279,6 +295,7 @@ class MainActivity : Activity() {
             updatePlayButton(index)
             Toast.makeText(this, "Tema cargado en Deck " + (if (index == 0) "A" else "B"), Toast.LENGTH_SHORT).show()
         } catch (error: Exception) {
+            audioRouter.detach(d.player)
             d.player?.release()
             d.player = null
             d.name?.text = "Error al cargar audio"
@@ -293,8 +310,13 @@ class MainActivity : Activity() {
             return
         }
         if (p.isPlaying) p.pause() else {
+            if (!audioRouter.readyForPlayback(p)) {
+                Toast.makeText(this, "No se detecta salida de audio USB. Revisá el indicador verde.", Toast.LENGTH_LONG).show()
+                return
+            }
             p.start()
             applySpeed(index)
+            audioRouter.verifyAfterStart()
         }
         updatePlayButton(index)
     }
@@ -313,11 +335,12 @@ class MainActivity : Activity() {
 
     private fun stutter(index: Int) {
         val d = decks[index]
-        d.player?.apply {
-            seekTo(d.cueMs)
-            start()
-        }
+        val player = d.player ?: return
+        if (!audioRouter.readyForPlayback(player)) return
+        player.seekTo(d.cueMs)
+        player.start()
         applySpeed(index)
+        audioRouter.verifyAfterStart()
         updatePlayButton(index)
     }
 
@@ -476,6 +499,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         if (::connector.isInitialized) connector.close()
+        if (::audioRouter.isInitialized) audioRouter.close()
         decks.forEach {
             it.equalizer?.release()
             it.player?.release()

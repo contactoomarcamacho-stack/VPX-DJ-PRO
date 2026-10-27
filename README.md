@@ -45,3 +45,15 @@ audio engine are not implemented. Android hardware EQ support varies by device.
 
 USB permissions are acquired through Android's USB Host API in direct mode.
 The Android MIDI service does not require an application-level MIDI permission.
+
+## v0.4.0 USB AUDIO: Mixtrack Pro audio output
+
+- USB MIDI and USB audio are separate Android devices. Successful MIDI connection does not guarantee that Android recognizes the audio output.
+- Use AudioManager.getDevices(GET_DEVICES_OUTPUTS) to detect an actual USB audio sink, preferring a device named Mixtrack/Numark.
+- On both MediaPlayers, request the USB audio device via setPreferredDevice when loading tracks, starting playback and reconnecting USB audio.
+- Verify the actual audio destination via MediaPlayer.getRoutedDevice when playback starts, rather than assuming an accepted request implies that audio is routed.
+- Pause if Android routes to a different output, instead of inadvertently playing through the tablet speaker.
+- Green UI status and manual "DETECTAR SALIDA USB AUDIO" button provide routing diagnostics. USB audio hotplug re-applies routing.
+- Android 9+ required for explicit MediaPlayer route preference; no separate app-level USB Audio permission is needed when Android exposes it as an AudioDeviceInfo.
+- Connect speakers to the original Mixtrack Pro rear **MASTER RCA OUTPUT 1**; USB audio channels 1/2 are master. Cue/headphones use the other stereo pair (3/4), which cannot be separated with this MediaPlayer-based prototype.
+- If output is not detected, check USB OTG and turn OFF Android developer option "Disable USB audio routing". Android's audio policy may refuse unsupported USB audio devices; an app cannot override that.
