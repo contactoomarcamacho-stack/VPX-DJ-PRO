@@ -1,28 +1,47 @@
-# VPX DJ PRO for Android
+# VPX DJ PRO: Numark Mixtrack Pro (original)
 
-Android Studio project (Kotlin, Android MIDI API) for **Numark Mixtrack Pro original / first generation**.
+Native Android/Kotlin dual-deck music player with Numark Mixtrack Pro USB MIDI integration.
 
-## Build
-- Android Studio with JDK 17
-- Android SDK 35
-- Open the repository root, allow Gradle sync, run `app` on Android 8+.
-- GitHub Actions builds a debug APK and runs unit tests automatically.
+## Build in GitHub Actions
+Each push to main runs JUnit tests and the Android debug build (Java 17, Android SDK 35).
+Download the artifact **VPX-DJ-PRO-debug** from the green workflow run.
 
-## Implemented
-- Native USB OTG MIDI discovery using `MidiManager`; connects to the MIDI device output port to receive controller events.
-- Two local audio players (Android MediaPlayer) with track loading via Android Storage Access Framework, play/pause, cue-to-start, playback position indicators and pitch-speed changes.
-- Preconfigured original Mixtrack Pro MIDI control mapping in `NumarkMixtrackProMap.kt`: PLAY, CUE, SYNC, STUTTER, channel volumes, EQ high/mid/low, relative gain, master volume, crossfader, tempo sliders, bend buttons and jog wheels.
-- Crossfader equal-power volume curve and platform Equalizer effects where supported.
-- MIDI event monitor and JUnit tests for control codes.
+## Hardware MIDI support
+- Numark Mixtrack Pro first generation (not Mixtrack Pro II / FX).
+- Actual MIDI CC/note numbers sourced from the original Mixxx mapping:
+  https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Numark%20Mixtrack%20Pro.midi.xml
+- **Android native MIDI** is the default and automatically opens *every output port* (hardware -> app).
+  Ports and device handles are retained to avoid premature garbage collection.
+- USB hotplug callback reconnects automatically.
+- Streaming MIDI parser handles fragmented packets, running status and realtime messages.
+- **USB DIRECTO** provides a second input method using Android USB Host, explicit permission
+  and class-compliant USB-MIDI 4-byte event packets. Choose it when Android detects the
+  controller but the MIDI monitor shows no data.
+- Visible monitor displays status, controller number, value, action and source.
+- Native outgoing MIDI LED updates for PLAY/Pause (when MIDI output is available).
 
-## Hardware mapping source
-Original Mixxx mapping:
-https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Numark%20Mixtrack%20Pro.midi.xml
+## Audio/UI
+Two decks: Android file picker, playback/pause, Cue, temporary pitch bend, pitch speed,
+three-band Android Equalizer (when available), relative gain, channel volume,
+equal-power crossfader, master volume, and progress/time indicators.
+MIDI faders and knobs update their visual SeekBars.
 
-Numark hardware guide:
-https://support.serato.com/hc/en-us/articles/10173741515663-Numark-Mixtrack-Pro-Quickstart-Guide
+## Important limitations
+Successful compilation **does not prove hardware behavior** without a physical Numark/Android test.
+This app does not have BPM detection or beat-aligned SYNC (SYNC copies pitch speed only).
+The jog interaction is seek/bend, not low-latency time-stretch scratching.
+USB master/cue separate channel routing, professional waveform decoding, and DJ-grade
+audio engine are not implemented. Android hardware EQ support varies by device.
 
-## Known limitations
-This is not a full professional DJ engine. SYNC currently copies the other deck's speed and **does not analyze BPM or align beats**. Jogs use a simple seek/bend approximation, **not true scratch audio**. EQ depends on Android audio effects availability. Audio plays through Android's selected output, and independent USB master/headphone routing is **not implemented**. Real hardware compatibility and APK build must be verified before claiming production readiness. UI seekbar positions do not yet mirror every physical knob.
+## Troubleshooting
+1. Connect the controller with a data-capable USB OTG cable and external power if needed.
+2. The top line should show an open MIDI port. Load audio into each deck.
+3. Move hardware PLAY, volume and crossfader. The yellow monitor should show
+   "MIDI RECIBIDO" and the corresponding note/CC value.
+4. If the device name appears but no messages arrive, press USB DIRECTO and grant
+   Android's USB permission; check that the monitor source changes to "USB DIRECTO".
+5. If neither works, the USB interface may not be exposed to Android or there may be
+   a host/USB power issue; connect the controller to a powered hub.
 
-No MIDI runtime permission dialog is required for Android MidiManager; USB MIDI access is provided by the Android MIDI service when the device is exposed. USB audio routing is a separate concern.
+USB permissions are acquired through Android's USB Host API in direct mode.
+The Android MIDI service does not require an application-level MIDI permission.

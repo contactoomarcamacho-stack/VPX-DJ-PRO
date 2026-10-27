@@ -1,195 +1,485 @@
 package uy.vpx.djpro
 
 import android.app.Activity
-import android.media.midi.MidiManager
-import android.media.midi.MidiDevice
-import android.media.midi.MidiReceiver
+import android.content.Intent
+import android.graphics.Color
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.audiofx.Equalizer
-import kotlin.math.cos
-import kotlin.math.sin
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.text.TextUtils
 import android.view.Gravity
-import android.widget.*
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.Toast
+import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
+/**
+ * Two local audio decks with controls attached directly to the original
+ * Numark Mixtrack Pro MIDI map. MIDI inputs are routed through
+ * NumarkMidiConnection, which owns and retains the USB MIDI ports.
+ */
 class MainActivity : Activity() {
- private lateinit var status: TextView
- private lateinit var midi: MidiManager
- private val players = arrayOfNulls<MediaPlayer>(2)
- private val playButtons = arrayOfNulls<Button>(2)
- private var midiDevice: MidiDevice? = null
- private val mappedPlay = mutableMapOf<Int, Int>()
- private var learnDeck = -1
- private val eq = arrayOfNulls<Equalizer>(2)
- private val volumes = floatArrayOf(1f, 1f)
- private val gains = floatArrayOf(1f, 1f)
- private val speeds = floatArrayOf(1f, 1f)
- private val bends = floatArrayOf(0f, 0f)
- private var cross = 0.5f
- private var master = 1f
- private val eqValues = Array(2) { floatArrayOf(0.5f, 0.5f, 0.5f) }
- private val progressBars = arrayOfNulls<SeekBar>(2)
- private var learnAction = "play"
- private val mappedCue = mutableMapOf<Int, Int>()
- private val mappedPitch = mutableMapOf<Int, Int>()
- private val pitchBars = arrayOfNulls<SeekBar>(2)
- private lateinit var midiMonitor: TextView
- override fun onCreate(savedInstanceState: Bundle?) {
-  super.onCreate(savedInstanceState)
-  midi = getSystemService(MIDI_SERVICE) as MidiManager
-  val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(13,18,29)); setPadding(20,14,20,14) }
-  val heading = TextView(this).apply { text = "VPX DJ PRO  •  USB MIDI"; textSize = 25f; setTextColor(Color.WHITE); gravity = Gravity.CENTER }
-  root.addView(heading)
-  status = TextView(this).apply { textSize = 15f; setTextColor(Color.CYAN); gravity = Gravity.CENTER; setPadding(0,15,0,15) }
-  root.addView(status)
-  val decks = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-  for (name in listOf("DECK A", "DECK B")) {
-   val deck = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(12,12,12,12) }
-   val title = TextView(this).apply { text = name; textSize = 24f; setTextColor(Color.WHITE) }
-   deck.addView(title)
-   val load = Button(this).apply { text = "CARGAR AUDIO"; setOnClickListener { val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "audio/*" }; startActivityForResult(intent, 100 + if (name == "DECK A") 0 else 1) } }
-   deck.addView(load)
-   val index = if (name == "DECK A") 0 else 1
-   val cue = Button(this).apply { text = "CUE"; setOnClickListener { players[index]?.pause(); players[index]?.seekTo(0); playButtons[index]?.text = "PLAY" } }
-   val play = Button(this).apply { text = "PLAY / PAUSE"; setOnClickListener { togglePlay(index) } }
-   playButtons[index] = play
-   deck.addView(cue); deck.addView(play)
-   deck.addView(Button(this).apply { text = "APRENDER PLAY MIDI"; setOnClickListener { learnDeck = index; learnAction = "play"; Toast.makeText(this@MainActivity, "Pulsá PLAY en la Numark", Toast.LENGTH_SHORT).show() } })
-   deck.addView(Button(this).apply { text = "APRENDER CUE MIDI"; setOnClickListener { learnDeck = index; learnAction = "cue"; Toast.makeText(this@MainActivity, "Pulsá CUE en la Numark", Toast.LENGTH_SHORT).show() } })
-   deck.addView(Button(this).apply { text = "APRENDER PITCH MIDI"; setOnClickListener { learnDeck = index; learnAction = "pitch"; Toast.makeText(this@MainActivity, "Mové el pitch en la Numark", Toast.LENGTH_SHORT).show() } })
-   val progress = SeekBar(this).apply { max = 1000; setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-    override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { if (fromUser) players[index]?.let { if (it.duration > 0) it.seekTo(it.duration * value / 1000) } }
-    override fun onStartTrackingTouch(bar: SeekBar?) {}
-    override fun onStopTrackingTouch(bar: SeekBar?) {}
-   }) }
-   progressBars[index] = progress
-   deck.addView(progress)
-   deck.addView(Button(this).apply { text = "SYNC"; setOnClickListener { speeds[index] = speeds[1 - index]; applySpeed(index) } })
-   val pitch = SeekBar(this).apply { max = 200; this.progress = 100 }
-   pitchBars[index] = pitch
-   deck.addView(pitch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-   pitch.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-    override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { if (fromUser) try { players[index]?.let { it.playbackParams = it.playbackParams.setSpeed((0.5f + value / 200f).coerceIn(0.5f, 1.5f)) } } catch (_: Exception) {} }
-    override fun onStartTrackingTouch(bar: SeekBar?) {}
-    override fun onStopTrackingTouch(bar: SeekBar?) {}
-   })
-   decks.addView(deck, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-  }
-  root.addView(decks, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f))
-  midiMonitor = TextView(this).apply { text = "MIDI: esperando controles físicos"; setTextColor(Color.YELLOW); gravity = Gravity.CENTER }
-  root.addView(midiMonitor)
-  val crossBar = SeekBar(this).apply { max = 127; this.progress = 64; setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-   override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { if (fromUser) { cross = value / 127f; updateVolumes() } }
-   override fun onStartTrackingTouch(bar: SeekBar?) {}
-   override fun onStopTrackingTouch(bar: SeekBar?) {}
-  }) }
-  root.addView(TextView(this).apply { text = "CROSSFADER"; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
-  root.addView(crossBar)
-  val refresh = Button(this).apply { text = "BUSCAR CONTROLADORA MIDI"; setOnClickListener { scanMidi() } }
-  root.addView(refresh)
-  setContentView(root)
-  scanMidi()
- }
- private fun togglePlay(index: Int) {
-  val player = players[index] ?: run { Toast.makeText(this, "Cargá una canción primero", Toast.LENGTH_SHORT).show(); return }
-  if (player.isPlaying) player.pause() else player.start()
-  playButtons[index]?.text = if (player.isPlaying) "PAUSA" else "PLAY"
- }
- override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-  super.onActivityResult(requestCode, resultCode, data)
-  if (resultCode != RESULT_OK || requestCode !in 100..101) return
-  val uri: Uri = data?.data ?: return
-  val index = requestCode - 100
-  try {
-   players[index]?.release()
-   val player = MediaPlayer()
-   player.setDataSource(this, uri)
-   player.prepare()
-   player.setOnCompletionListener { playButtons[index]?.text = "PLAY" }
-   players[index] = player
-   try { eq[index]?.release(); eq[index] = Equalizer(0, player.audioSessionId).apply { enabled = true }; updateEq(index) } catch (_: Exception) {}
-   updateVolumes()
-   playButtons[index]?.text = "PLAY"
-   Toast.makeText(this, "Audio cargado", Toast.LENGTH_SHORT).show()
-  } catch (e: Exception) { players[index] = null; Toast.makeText(this, "Error de audio: " + e.message, Toast.LENGTH_LONG).show() }
- }
- private fun updateVolumes() {
-  for (i in 0..1) {
-   val curve = if (i == 0) cos(cross * Math.PI / 2) else sin(cross * Math.PI / 2)
-   val v = (volumes[i] * gains[i] * master * curve.toFloat()).coerceIn(0f, 1f)
-   players[i]?.setVolume(v, v)
-  }
- }
- private fun applySpeed(i: Int) { try { players[i]?.let { it.playbackParams = it.playbackParams.setSpeed((speeds[i] + bends[i]).coerceIn(0.5f, 1.5f)) } } catch (_: Exception) {} }
- private fun updateEq(i: Int) {
-  val effect = eq[i] ?: return
-  try {
-   val range = effect.bandLevelRange
-   for (band in 0 until effect.numberOfBands.toInt()) {
-    val freq = effect.getCenterFreq(band.toShort()) / 1000
-    val idx = if (freq < 400) 2 else if (freq < 4000) 1 else 0
-    effect.setBandLevel(band.toShort(), (range[0] + (range[1] - range[0]) * eqValues[i][idx]).toInt().toShort())
-   }
-  } catch (_: Exception) {}
- }
- private val receiver = object : MidiReceiver() {
-  override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
-   var p = offset
-   while (p + 2 < offset + count) {
-    val statusByte = msg[p].toInt() and 255
-    if (statusByte < 128 || statusByte >= 240) { p++; continue }
-    val number = msg[p + 1].toInt() and 127
-    val value = msg[p + 2].toInt() and 127
-    val binding = NumarkMixtrackProMap.lookup(statusByte, number)
-    runOnUiThread { handleMidi(statusByte, number, value, binding) }
-    p += 3
-   }
-  }
- }
- private fun handleMidi(statusByte: Int, number: Int, value: Int, binding: NumarkMixtrackProMap.Binding?) {
-  midiMonitor.text = "MIDI " + statusByte.toString(16) + ":" + number.toString(16) + "=" + value + " / " + (binding?.action ?: "SIN MAPA")
-  if (binding == null) return
-  val i = binding.deck
-  val pressed = (statusByte and 240) == 144 && value > 0
-  when (binding.action) {
-   NumarkMixtrackProMap.Action.PLAY -> if (pressed) togglePlay(i)
-   NumarkMixtrackProMap.Action.CUE -> if (pressed) { players[i]?.pause(); players[i]?.seekTo(0); playButtons[i]?.text = "PLAY" }
-   NumarkMixtrackProMap.Action.SYNC -> if (pressed) { speeds[i] = speeds[1 - i]; applySpeed(i) }
-   NumarkMixtrackProMap.Action.STUTTER -> if (pressed) { players[i]?.seekTo(0); players[i]?.start() }
-   NumarkMixtrackProMap.Action.VOLUME -> { volumes[i] = value / 127f; updateVolumes() }
-   NumarkMixtrackProMap.Action.GAIN -> { gains[i] = (gains[i] + (if (value > 64) value - 128 else value) / 128f).coerceIn(0f, 2f); updateVolumes() }
-   NumarkMixtrackProMap.Action.HIGH -> { eqValues[i][0] = value / 127f; updateEq(i) }
-   NumarkMixtrackProMap.Action.MID -> { eqValues[i][1] = value / 127f; updateEq(i) }
-   NumarkMixtrackProMap.Action.LOW -> { eqValues[i][2] = value / 127f; updateEq(i) }
-   NumarkMixtrackProMap.Action.PITCH -> { speeds[i] = (1f + (value - 64) / 640f); applySpeed(i) }
-   NumarkMixtrackProMap.Action.CROSSFADER -> { cross = 1f - value / 127f; updateVolumes() }
-   NumarkMixtrackProMap.Action.MASTER -> { master = value / 127f; updateVolumes() }
-   NumarkMixtrackProMap.Action.BEND_UP -> { bends[i] = if (pressed) 0.03f else 0f; applySpeed(i) }
-   NumarkMixtrackProMap.Action.BEND_DOWN -> { bends[i] = if (pressed) -0.03f else 0f; applySpeed(i) }
-   NumarkMixtrackProMap.Action.JOG -> {
-    val delta = if (value > 64) value - 128 else value
-    players[i]?.let { player ->
-     if (player.isPlaying) { bends[i] = (delta / 500f).coerceIn(-0.08f, 0.08f); applySpeed(i) }
-     else player.seekTo((player.currentPosition + delta * 35).coerceIn(0, player.duration.coerceAtLeast(0)))
+    private class Deck {
+        var player: MediaPlayer? = null
+        var equalizer: Equalizer? = null
+        var name: TextView? = null
+        var position: SeekBar? = null
+        var time: TextView? = null
+        var play: Button? = null
+        var volumeBar: SeekBar? = null
+        var pitchBar: SeekBar? = null
+        var gainBar: SeekBar? = null
+        val eqBars = arrayOfNulls<SeekBar>(3)
+        val eqValues = floatArrayOf(0.5f, 0.5f, 0.5f) // high, mid, low
+        var channelVolume = 1f
+        var gain = 1f
+        var pitch = 1f
+        var bend = 0f
+        var cueMs = 0
+        var touchingJog = false
+        var lastJogAt = 0L
     }
-   }
-   NumarkMixtrackProMap.Action.JOG_TOUCH -> {}
-  }
- }
- private fun scanMidi() {
-  val devices = midi.devices
-  status.text = if (devices.isEmpty()) "No se detectaron dispositivos MIDI. Conectá la consola por USB OTG." else
-   devices.joinToString("\n") { MidiDiagnostics.deviceLabel(it.properties.getString(android.media.midi.MidiDeviceInfo.PROPERTY_NAME), it.inputPortCount, it.outputPortCount) }
-  val info = devices.firstOrNull { it.outputPortCount > 0 && (it.properties.getString(android.media.midi.MidiDeviceInfo.PROPERTY_NAME) ?: "").contains("mixtrack", true) } ?: devices.firstOrNull { it.outputPortCount > 0 } ?: return
-  midiDevice?.close()
-  midi.openDevice(info, { device ->
-   midiDevice = device
-   device?.openOutputPort(0)?.connect(receiver)
-  }, android.os.Handler(mainLooper))
- }
- override fun onDestroy() { midiDevice?.close(); eq.forEach { it?.release() }; players.forEach { it?.release() }; super.onDestroy() }
+
+    private val decks = arrayOf(Deck(), Deck())
+    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var connector: NumarkMidiConnection
+    private lateinit var connectionStatus: TextView
+    private lateinit var midiMonitor: TextView
+    private lateinit var crossBar: SeekBar
+    private lateinit var masterBar: SeekBar
+    private var cross = 0.5f
+    private var master = 1f
+    private var messages = 0
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val scroller = ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(Color.rgb(12, 17, 30))
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(18, 10, 18, 10)
+        }
+        scroller.addView(root)
+        root.addView(text("VPX DJ PRO   |   NUMARK MIXTRACK PRO", 21f, Color.WHITE))
+        connectionStatus = text("Buscando controladora USB MIDI...", 13f, Color.CYAN)
+        root.addView(connectionStatus)
+
+        val decksRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (deck in 0..1) {
+            val column = buildDeck(deck)
+            decksRow.addView(column, LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        root.addView(decksRow)
+
+        val mixer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val crossColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        crossColumn.addView(text("CROSSFADER A  /  B", 12f))
+        crossBar = newBar(crossColumn, 64) { value ->
+            cross = value / 127f
+            updateVolumes()
+        }
+        mixer.addView(crossColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
+        val masterColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        masterColumn.addView(text("MASTER", 12f))
+        masterBar = newBar(masterColumn, 127) { value ->
+            master = value / 127f
+            updateVolumes()
+        }
+        mixer.addView(masterColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(mixer)
+
+        midiMonitor = text("MIDI: sin mensajes. Mové un control de la Numark.", 12f, Color.YELLOW)
+        root.addView(midiMonitor)
+        val connectionActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        connectionActions.addView(Button(this).apply {
+            text = "RECONEXIÓN MIDI"
+            setOnClickListener { connector.scan() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        connectionActions.addView(Button(this).apply {
+            text = "USB DIRECTO"
+            setOnClickListener { connector.useDirectUsb() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(connectionActions)
+        root.addView(text("Si aparece conectada pero no registra controles, probá USB DIRECTO. El permiso lo solicita Android.", 11f, Color.LTGRAY))
+        setContentView(scroller)
+
+        connector = NumarkMidiConnection(this,
+            onStatus = { connectionStatus.text = it },
+            onEvent = { status, number, value, source ->
+                onMidi(status, number, value, source)
+            }
+        )
+        connector.scan()
+        handler.post(object : Runnable {
+            override fun run() {
+                refreshProgress()
+                handler.postDelayed(this, 100)
+            }
+        })
+    }
+
+    private fun buildDeck(index: Int): LinearLayout {
+        val color = if (index == 0) Color.rgb(80, 214, 234) else Color.rgb(228, 128, 245)
+        val d = decks[index]
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(8, 0, 8, 0)
+        }
+        column.addView(text(if (index == 0) "DECK A" else "DECK B", 21f, color))
+        d.name = text("Sin canción", 12f, Color.LTGRAY).apply {
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        column.addView(d.name)
+        val load = Button(this).apply {
+            text = "CARGAR TEMA"
+            setOnClickListener { selectTrack(index) }
+        }
+        column.addView(load)
+        d.time = text("00:00 / 00:00", 12f, color)
+        column.addView(d.time)
+        d.position = newBar(column, 0, 1000) { value ->
+            d.player?.let { player ->
+                if (player.duration > 0) player.seekTo(player.duration * value / 1000)
+            }
+        }
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        d.play = Button(this).apply {
+            text = "PLAY"
+            setOnClickListener { togglePlay(index) }
+        }
+        buttons.addView(d.play, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        buttons.addView(Button(this).apply {
+            text = "CUE"
+            setOnClickListener { cue(index) }
+            setOnLongClickListener {
+                d.cueMs = d.player?.currentPosition ?: 0
+                Toast.makeText(this@MainActivity, "Cue guardado", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        buttons.addView(Button(this).apply {
+            text = "SYNC"
+            setOnClickListener { sync(index) }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        column.addView(buttons)
+
+        val levels = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val v = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        v.addView(text("CANAL", 11f))
+        d.volumeBar = newBar(v, 127) { value ->
+            d.channelVolume = value / 127f; updateVolumes()
+        }
+        levels.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        p.addView(text("PITCH", 11f))
+        d.pitchBar = newBar(p, 64) { value ->
+            d.pitch = pitchSpeed(value); applySpeed(index)
+        }
+        levels.addView(p, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        column.addView(levels)
+
+        val eqRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (band in 0..2) {
+            val b = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            b.addView(text(arrayOf("HIGH", "MID", "LOW")[band], 11f))
+            d.eqBars[band] = newBar(b, 64) { value ->
+                d.eqValues[band] = value / 127f
+                updateEq(index)
+            }
+            eqRow.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        column.addView(eqRow)
+
+        column.addView(text("GANANCIA", 11f))
+        d.gainBar = newBar(column, 64) { value ->
+            d.gain = value / 64f
+            updateVolumes()
+        }
+        return column
+    }
+
+    private fun text(content: String, size: Float, color: Int = Color.WHITE): TextView =
+        TextView(this).apply {
+            text = content
+            textSize = size
+            setTextColor(color)
+            gravity = Gravity.CENTER
+            setPadding(3, 2, 3, 2)
+        }
+
+    private fun newBar(parent: LinearLayout, initial: Int, maxValue: Int = 127, onUser: (Int) -> Unit): SeekBar {
+        val bar = SeekBar(this).apply {
+            max = maxValue
+            progress = initial
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                    if (fromUser) onUser(value)
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        parent.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return bar
+    }
+
+    private fun selectTrack(index: Int) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+        }
+        startActivityForResult(intent, 100 + index)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || requestCode !in 100..101) return
+        val uri: Uri = data?.data ?: return
+        val index = requestCode - 100
+        val d = decks[index]
+        try {
+            d.equalizer?.release()
+            d.equalizer = null
+            d.player?.release()
+            d.player = null
+            val player = MediaPlayer().apply {
+                setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+                setDataSource(this@MainActivity, uri)
+                prepare()
+                setOnCompletionListener { updatePlayButton(index) }
+            }
+            d.player = player
+            d.name?.text = uri.lastPathSegment?.substringAfterLast('/') ?: "Tema cargado"
+            d.position?.progress = 0
+            d.cueMs = 0
+            try {
+                d.equalizer = Equalizer(0, player.audioSessionId).apply { enabled = true }
+                updateEq(index)
+            } catch (_: Exception) { }
+            updateVolumes()
+            updatePlayButton(index)
+            Toast.makeText(this, "Tema cargado en Deck " + (if (index == 0) "A" else "B"), Toast.LENGTH_SHORT).show()
+        } catch (error: Exception) {
+            d.player?.release()
+            d.player = null
+            d.name?.text = "Error al cargar audio"
+            Toast.makeText(this, "Error de audio: " + error.message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun togglePlay(index: Int) {
+        val p = decks[index].player
+        if (p == null) {
+            Toast.makeText(this, "Primero cargá un tema en Deck " + (if (index == 0) "A" else "B"), Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (p.isPlaying) p.pause() else {
+            p.start()
+            applySpeed(index)
+        }
+        updatePlayButton(index)
+    }
+
+    private fun updatePlayButton(index: Int) {
+        val playing = decks[index].player?.isPlaying == true
+        decks[index].play?.text = if (playing) "PAUSA" else "PLAY"
+        if (::connector.isInitialized) connector.sendLed(if (index == 0) 0x3b else 0x42, playing)
+    }
+
+    private fun cue(index: Int) {
+        val d = decks[index]
+        d.player?.apply { pause(); seekTo(d.cueMs) }
+        updatePlayButton(index)
+    }
+
+    private fun stutter(index: Int) {
+        val d = decks[index]
+        d.player?.apply {
+            seekTo(d.cueMs)
+            start()
+        }
+        applySpeed(index)
+        updatePlayButton(index)
+    }
+
+    private fun sync(index: Int) {
+        // Tempo only: Android MediaPlayer does not provide beat analysis / phase sync.
+        decks[index].pitch = decks[1 - index].pitch
+        decks[index].pitchBar?.progress = decks[1 - index].pitchBar?.progress ?: 64
+        applySpeed(index)
+    }
+
+    private fun pitchSpeed(value: Int): Float =
+        (1f + (value - 64f) * 0.08f / if (value < 64) 64f else 63f).coerceIn(0.92f, 1.08f)
+
+    private fun applySpeed(index: Int) {
+        val d = decks[index]
+        try {
+            val p = d.player ?: return
+            p.playbackParams = p.playbackParams.setSpeed((d.pitch + d.bend).coerceIn(0.5f, 1.5f))
+        } catch (_: Exception) { }
+    }
+
+    private fun updateVolumes() {
+        val left = cos(cross * Math.PI / 2).toFloat()
+        val right = sin(cross * Math.PI / 2).toFloat()
+        decks.forEachIndexed { index, deck ->
+            val value = (deck.channelVolume * deck.gain * master *
+                if (index == 0) left else right).coerceIn(0f, 1f)
+            deck.player?.setVolume(value, value)
+        }
+    }
+
+    private fun updateEq(index: Int) {
+        val d = decks[index]
+        val effect = d.equalizer ?: return
+        try {
+            val range = effect.bandLevelRange
+            for (i in 0 until effect.numberOfBands.toInt()) {
+                val hz = effect.getCenterFreq(i.toShort()) / 1000
+                val mapped = if (hz < 400) 2 else if (hz < 4000) 1 else 0
+                val value = d.eqValues[mapped]
+                val level = (range[0] + (range[1] - range[0]) * value).roundToInt().toShort()
+                effect.setBandLevel(i.toShort(), level)
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun onMidi(statusByte: Int, number: Int, value: Int, source: String) {
+        messages++
+        val binding = NumarkMixtrackProMap.lookup(statusByte, number)
+        midiMonitor.text = String.format(Locale.US,
+            "MIDI RECIBIDO #%d  %02X %02X %02X  |  %s  |  %s",
+            messages, statusByte, number, value, source,
+            binding?.action?.name ?: "CONTROL NO MAPEADO")
+        if (binding == null) return
+        val index = binding.deck
+        val press = (statusByte and 0xf0) == 0x90 && value > 0
+        val d = if (index in 0..1) decks[index] else null
+        when (binding.action) {
+            NumarkMixtrackProMap.Action.PLAY -> if (press) togglePlay(index)
+            NumarkMixtrackProMap.Action.CUE -> if (press) cue(index)
+            NumarkMixtrackProMap.Action.SYNC -> if (press) sync(index)
+            NumarkMixtrackProMap.Action.STUTTER -> if (press) stutter(index)
+            NumarkMixtrackProMap.Action.VOLUME -> {
+                d!!.channelVolume = value / 127f
+                d.volumeBar?.progress = value
+                updateVolumes()
+            }
+            NumarkMixtrackProMap.Action.PITCH -> {
+                d!!.pitch = pitchSpeed(value)
+                d.pitchBar?.progress = value
+                applySpeed(index)
+            }
+            NumarkMixtrackProMap.Action.HIGH,
+            NumarkMixtrackProMap.Action.MID,
+            NumarkMixtrackProMap.Action.LOW -> {
+                val b = when (binding.action) {
+                    NumarkMixtrackProMap.Action.HIGH -> 0
+                    NumarkMixtrackProMap.Action.MID -> 1
+                    else -> 2
+                }
+                d!!.eqValues[b] = value / 127f
+                d.eqBars[b]?.progress = value
+                updateEq(index)
+            }
+            NumarkMixtrackProMap.Action.GAIN -> {
+                // Mixtrack Pro gain knobs are relative/two's-complement MIDI CC.
+                val step = if (value > 63) value - 128 else value
+                d!!.gain = (d.gain + step / 100f).coerceIn(0f, 2f)
+                d.gainBar?.progress = (d.gain * 64).roundToInt().coerceIn(0, 127)
+                updateVolumes()
+            }
+            NumarkMixtrackProMap.Action.CROSSFADER -> {
+                cross = 1f - value / 127f // inverted in original Mixxx mapping
+                crossBar.progress = (cross * 127).roundToInt()
+                updateVolumes()
+            }
+            NumarkMixtrackProMap.Action.MASTER -> {
+                master = value / 127f
+                masterBar.progress = value
+                updateVolumes()
+            }
+            NumarkMixtrackProMap.Action.BEND_UP -> {
+                d!!.bend = if (press) 0.04f else 0f
+                applySpeed(index)
+            }
+            NumarkMixtrackProMap.Action.BEND_DOWN -> {
+                d!!.bend = if (press) -0.04f else 0f
+                applySpeed(index)
+            }
+            NumarkMixtrackProMap.Action.JOG_TOUCH -> {
+                d!!.touchingJog = press
+                if (!press) { d.bend = 0f; applySpeed(index) }
+            }
+            NumarkMixtrackProMap.Action.JOG -> {
+                val diff = if (value > 63) value - 128 else value
+                if (diff != 0) {
+                    val p = d!!.player
+                    if (p != null) {
+                        if (d.touchingJog || !p.isPlaying) {
+                            p.seekTo((p.currentPosition + diff * 40)
+                                .coerceIn(0, p.duration.coerceAtLeast(0)))
+                        } else {
+                            d.bend = (diff * 0.007f).coerceIn(-0.10f, 0.10f)
+                            d.lastJogAt = SystemClock.uptimeMillis()
+                            applySpeed(index)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refreshProgress() {
+        val now = SystemClock.uptimeMillis()
+        for (index in 0..1) {
+            val d = decks[index]
+            if (d.lastJogAt > 0 && now - d.lastJogAt >= 125 && d.bend != 0f) {
+                d.bend = 0f
+                d.lastJogAt = 0
+                applySpeed(index)
+            }
+            d.player?.let { p ->
+                if (p.duration > 0) {
+                    d.position?.progress = (p.currentPosition.toLong() * 1000 / p.duration).toInt()
+                    d.time?.text = formatTime(p.currentPosition) + " / " + formatTime(p.duration)
+                }
+            }
+        }
+    }
+
+    private fun formatTime(ms: Int): String {
+        val seconds = ms.coerceAtLeast(0) / 1000
+        return String.format(Locale.US, "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        if (::connector.isInitialized) connector.close()
+        decks.forEach {
+            it.equalizer?.release()
+            it.player?.release()
+        }
+        super.onDestroy()
+    }
 }
