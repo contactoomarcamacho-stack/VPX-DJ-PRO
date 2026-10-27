@@ -69,7 +69,7 @@ class MainActivity : Activity() {
    progressBars[index] = progress
    deck.addView(progress)
    deck.addView(Button(this).apply { text = "SYNC"; setOnClickListener { speeds[index] = speeds[1 - index]; applySpeed(index) } })
-   val pitch = SeekBar(this).apply { max = 200; progress = 100 }
+   val pitch = SeekBar(this).apply { max = 200; this.progress = 100 }
    pitchBars[index] = pitch
    deck.addView(pitch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
    pitch.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -82,7 +82,7 @@ class MainActivity : Activity() {
   root.addView(decks, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f))
   midiMonitor = TextView(this).apply { text = "MIDI: esperando controles físicos"; setTextColor(Color.YELLOW); gravity = Gravity.CENTER }
   root.addView(midiMonitor)
-  val crossBar = SeekBar(this).apply { max = 127; progress = 64; setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+  val crossBar = SeekBar(this).apply { max = 127; this.progress = 64; setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
    override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { if (fromUser) { cross = value / 127f; updateVolumes() } }
    override fun onStartTrackingTouch(bar: SeekBar?) {}
    override fun onStopTrackingTouch(bar: SeekBar?) {}
