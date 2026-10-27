@@ -40,6 +40,6 @@ class MainActivity : Activity() {
  private fun scanMidi() {
   val devices = midi.devices
   status.text = if (devices.isEmpty()) "No se detectaron dispositivos MIDI. Conectá la consola por USB OTG." else
-   devices.joinToString("\n") { "MIDI detectado: ${it.properties.getString(android.media.midi.MidiDeviceInfo.PROPERTY_NAME) ?: "Dispositivo USB"} • entradas: ${it.inputPortCount} • salidas: ${it.outputPortCount}" }
+   devices.joinToString("\n") { MidiDiagnostics.deviceLabel(it.properties.getString(android.media.midi.MidiDeviceInfo.PROPERTY_NAME), it.inputPortCount, it.outputPortCount) }
  }
 }
